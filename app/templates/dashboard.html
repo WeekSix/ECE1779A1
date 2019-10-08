@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block header%}hello {{username}}, this is your dashboard.{% endblock %}
+
+{% block body %}
+
+{% if requests%}
+<div class="dashboard_table">
+    {% for req in requests %}
+    <div class="col-lg-3 col-md-4 col-xs-6">
+    	{% if req['stat'] == 'success' %}
+        <a href="./showImage/?image_id={{req['requestID']}}&page={{page}}" class="d-block mb-4 h-100">
+            <img class="img-fluid img-thumbnail" src="https://s3.us-east-2.amazonaws.com/rtweb-9468/{{req['requestID']}}" alt="">
+        </a>
+        {% else %}
+         <div class="d-block mb-4 h-100">
+            <img onclick="loading_click('{{req['requestID']}}','dashboard')" id="loading" class="img-fluid img-thumbnail loading" src="{{ url_for('static', filename='loading.jpg') }}">
+        </div>
+        {% endif%}
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+	<p class="error_message">No image in your dashboard yet. Please generate.</p>
+{% endif %}
+<br/>
+
+<!-- The Modal -->
+<div id="myModal" class="modal" onload="load_modal()">
+
+  <!-- Modal content -->
+  <div class="modal-content">
+    <span class="close">&times;</span>
+    <p style="text-align:center; color:red;">We are still generating the image.</p>
+    <button style="margin-left:28%;" class="btn btn-primary btn-block popup" id="delete_loading">DELETE</button> 
+    <button class="btn btn-primary btn-block popup" onclick="location.href='./dashboard'">REFRESH</button>
+  </div>
+
+</div>
+
+<button class="btn btn-primary btn-block btn-large" onclick="location.href='./dashboard'">REFRESH</button> 
+<button class="btn btn-primary btn-block btn-large" onclick="location.href='./form'">GENERATE</button> 
+{% endblock %}
