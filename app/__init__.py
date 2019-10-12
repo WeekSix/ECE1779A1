@@ -1,4 +1,8 @@
-"""top level entry"""
+'''
+Creates flask instance
+Imports main.py file
+
+'''
 from flask import Flask
 import os
 webapp = Flask(__name__)
