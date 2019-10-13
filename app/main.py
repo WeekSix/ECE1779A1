@@ -1,190 +1,226 @@
-import json
-import uuid
-from app import webapp
-import app.db_util
-import app.login
-from app.lambda_lib import invoke_render
-from operator import itemgetter
-from flask import session, request, render_template, redirect, url_for
+'''
 
+main file, holds all methods
+
+'''
+
+from flask import session, request, render_template, redirect, url_for, flash, logging
+from flask_mysqldb import MySQL
+from wtforms import Form, StringField, PasswordField, TextAreaField, validators
+from app import webapp
+import os
+from passlib.hash import sha256_crypt
+from functools import wraps
+from werkzeug.utils import secure_filename
+
+webapp.secret_key = '\x80\xa9s*\x12\xc7x\xa9d\x1f(\x03\xbeHJ:\x9f\xf0!\xb1a\xaa\x0f\xee'
+
+#Config MySQL
+webapp.config['MYSQL_HOST'] = 'localhost'
+webapp.config['MYSQL_USER'] = 'root'
+webapp.config['MYSQL_PASSWORD'] = 'password'
+webapp.config['MYSQL_DB'] = 'ece1779_a1'
+webapp.config['MYSQL_CURSORCLASS'] = 'DictCursor'
+
+#init MySQL
+mysql = MySQL(webapp)
+
+
+
+#landing page
 @webapp.route('/')
 def main():
-    return redirect(url_for('index'))
 
-@webapp.route('/index')
-def index():
-    if 'username' not in session:
-        return render_template("index.html")
-    else:
-        return redirect(url_for('dashboard'))
+	return render_template("home.html")
 
-@webapp.route('/login',methods=["GET","POST"])
-def login():
-    if request.method == 'GET':
-        return render_template("login.html")
-    else:
-        username=request.form['username']
-        password=request.form['password']
- 
-        result=app.login.login(username,password)
-        if result is True:
-            session['username']=username
-            return redirect(url_for('dashboard'))
-        else:
-            return render_template("login.html", message="Your username/password is wrong. Please try again.")
-             
-@webapp.route('/register',methods=["GET","POST"])
+
+
+@webapp.route('/about')
+def about():
+	
+	return render_template("about.html")
+
+#class for Register form
+class RegisterForm(Form):
+	name = StringField('Name', [validators.Length(min = 1, max = 50)])
+	username = StringField('Username', [validators.Length(min = 4, max = 25)])
+	email = StringField('Email', [validators.Length(min = 6, max = 50)])
+	password = PasswordField('Password', [
+		validators.DataRequired(),
+		validators.EqualTo('confirm', message = 'Passwords do not match')
+		])
+	confirm = PasswordField('Confirm Password')
+
+@webapp.route('/register', methods = ['GET', 'POST'])
 def register():
-    if request.method == 'GET':
-        return render_template("register.html")
-    else:
-        username=request.form['username']
-        password=request.form['password']
- 
-        if app.login.register(username,password) is True:
-            session['username']=username
-            return redirect(url_for('dashboard'))
-        else:
-            return render_template("register.html", message="Username not available. Please try another username.") 
-        
-@webapp.route("/dashboard")
+	form = RegisterForm(request.form)
+	if request.method == 'POST' and form.validate():
+		name  = form.name.data 
+		email = form.email.data 
+		username = form.username.data 
+		password = sha256_crypt.encrypt(str(form.password.data))
+
+		#Create cursor
+		cur = mysql.connection.cursor()
+
+		cur.execute("INSERT INTO users(name, email, username, password) VALUES(%s, %s, %s, %s)",(name, email, username, password))
+
+		#Commit to DB
+		mysql.connection.commit()
+
+		#Close connection
+		cur.close()
+
+		flash('Thank you for registering. You can now log in.', 'success')
+		return redirect(url_for('login'))
+		
+	return render_template("register.html", form = form)
+
+#User login
+@webapp.route('/login', methods = ['GET', 'POST'])
+def login():
+	
+	if request.method == 'POST':
+		#Get Form Fields
+		username = request.form['username']
+		password_check = request.form['password']
+
+		#Create cursor
+		cur = mysql.connection.cursor()
+
+		#Get username from database
+		result = cur.execute("SELECT * FROM users WHERE username = %s", [username])
+
+		if result > 0:
+			#Get stored password which is hashed
+			data = cur.fetchone()
+			password = data['password']
+
+			#Compare passwords
+			if sha256_crypt.verify(password_check, password):
+				#Passed
+				session['logged_in'] = True
+				session['username'] = username
+
+
+				flash('You are now logged in', 'success')
+				return redirect(url_for('dashboard'))
+
+			else:
+				error = 'Invalid login'
+				return render_template('login.html', error = error)
+			#close connection
+			cur.close()	
+		else:
+			error = 'Username not found'
+			return render_template('login.html', error = error)
+			 
+	return render_template('login.html')
+
+#Do not allow log out when not logged in
+def is_logged_in(f):
+	@wraps(f)
+	def wrap(*args, **kwargs):
+		if 'logged_in' in session:
+			return f(*args, **kwargs)
+		else:
+			flash('Please log in', 'danger')
+			return redirect(url_for('login'))
+	return wrap
+
+
+#User dashboard
+@webapp.route('/dashboard', methods = ['GET', 'POST'])
+@is_logged_in
 def dashboard():
-    if 'username' not in session:
-        return redirect(url_for('index'))
 
-    #TODO:get past user request
-    result=sorted(app.db_util.get_user_requests(session['username']), key=itemgetter('timestamp'), reverse=True)
-    
-    return render_template("dashboard.html",page = 'dashboard', username=session['username'],requests=result)
+	# #Create cursor
+	# cur = mysql.connection.cursor()
 
-@webapp.route("/public")
-def public():
-    if 'username' not in session:
-        return redirect(url_for('index'))
+	# #Execute
+	# result = cur.execute("SELECT * FROM photos WHERE username = '%s'", (session['username']))
 
-    #TODO:get past user request
-    result=sorted(app.db_util.get_public_request(), key=itemgetter('timestamp'), reverse=True)
-    
-    return render_template("public.html",page ='public', username=session['username'],requests=result)
+	# photos = cur.fetchall()
+				
+	# if result > 0:
+	# 	return render_template("dashboard.html", photos = photos)
+				
+	# #Close connection
+	# cur.close()
 
-@webapp.route("/showImage/", methods=['GET'])
-def showImage():
-    image_id = request.args.get('image_id')
-    page = request.args.get('page')
- 
-    return redirect(url_for('image', page = page, image_id=image_id))
+	return render_template("dashboard.html")
 
-@webapp.route("/image")
-def image():
+webapp.config["IMAGE_UPLOADS"] = "C:/Users/adeel/Desktop/UofT/ECE1779/Assignment_1/static/img_uploads"
+webapp.config["ALLOWED_IMAGE_EXT"] = ["PNG", "JPG", "JPEG"]
 
-    if 'username' not in session:
-        return redirect(url_for('index'))
-    
-    image_id = request.args.get('image_id')
-    page = request.args.get('page')
-    if not page:
-        page = 'dashboard'
-    if not image_id:
-        return redirect(url_for(page))
-    
-    result = app.db_util.get_image_entities(image_id)
-    entities = ''
-    
-    if not result:
-        return render_template('error.html', error = 'Could not find the image', page = page)
-    
-     #if image is not public and does not belong to session user, show error      
-    if result['username'] != session['username']:
-        if result['ownership'] == 'public':
-            page = 'public'
-        else:
-            return render_template('error.html', error = 'Sorry. You are not allowed to view this image.', page = 'dashboard')
-    
-    if 'entities' in result:
-        entities = sorted(result['entities'], key=itemgetter('type'))
-       
-    
-    return render_template('image.html', session_user = session['username'], page = page, image_id=image_id, result = result, entities=entities)
+def allowed_img(filename):
 
+	if not "." in filename:
+		return False
 
-@webapp.route("/delete/", methods=['GET'])
-def delete():
-    if 'username' not in session:
-        return redirect(url_for('index'))
-    
-    image_id = request.args.get('image_id')
-    page = request.args.get('page')
-    
-   
-    if not page:
-        page = 'dashboard'
-    if not image_id:
-        return redirect(url_for('dashboard'))
-   
-    result=app.db_util.delete_request(session['username'], image_id)
-    
-    if result:
-        if page == 'dashboard':
-            return redirect(url_for('dashboard'))
-        else: 
-            return redirect(url_for('public'))
-        
-    #if delete request failed, show error    
-    return render_template('error.html', error = 'An error occurred. ', page = page)
-   
-   
-@webapp.route("/updateOwnership/", methods=['GET'])
-def updateOwnership():
-    if 'username' not in session:
-        return redirect(url_for('index'))
-    
-    image_id = request.args.get('image_id')
-    page = request.args.get('page')
-    
-    if not page:
-        page = 'dashboard'
-    if not image_id:
-        return redirect(url_for('dashboard'))
-        
-    result = app.db_util.update_request(session['username'], image_id)
-    
-    if result:
-        return redirect(url_for('image', image_id= image_id, page = page))
-    
-    #if update request failed, show error
-    return render_template('error.html', error = 'An error occurred. ', page = page)
-    
+	ext = filename.rsplit(".", 1)[1]
+
+	if ext.upper() in webapp.config["ALLOWED_IMAGE_EXT"]:
+		return True
+	else:
+		return False
+
+#User add photo
+@webapp.route('/add_photo', methods = ['GET', 'POST'])
+@is_logged_in
+def add_photo():
+
+	if request.method == 'POST':
+
+		if request.files:
+
+			image = request.files["image"]
+
+			if image.filename == "":
+
+				flash('Image must have a filename', 'danger')
+				return redirect(url_for('add_photo'))
+
+			if not allowed_img(image.filename):
+
+				flash('Image is not a valid extension', 'danger')
+				return redirect(url_for('add_photo'))
+
+			else:
+				
+				filename = secure_filename(image.filename)
+				photo_loc_org = os.path.join(webapp.config["IMAGE_UPLOADS"], filename)
+				
+				#Add text  bounding here 
+				photo_loc_edit = photo_loc_org
+
+				image.save(photo_loc_org)
+				
+			
+				#Create cursor
+				cur = mysql.connection.cursor()
+
+				#Execute
+				cur.execute("INSERT INTO photos(photo_loc_org, photo_loc_edit, username) VALUES(%s, %s, %s)", (photo_loc_org, photo_loc_edit, session['username']))
+				
+				#Commit
+				mysql.connection.commit()
+				
+				#Close connection
+				cur.close()
+			flash('Photo uploaded successfully', 'success')
+			return redirect(url_for('add_photo'))
+
+		
+	return render_template("add_photo.html")
 
 
-@webapp.route("/form", methods=["GET", "POST"])
-def form():
-    if 'username' not in session:
-        return redirect(url_for('index'))
-    
-    if request.method == 'GET':
-        return render_template("form.html", page = 'form')
-    else:
-        entities = request.form['output_json']
-        
-        entities=str(entities)
-        d={
-            'id': str(uuid.uuid4())[:18] +".png",
-            "entities":json.loads(entities)   
-        }
-        
-        ownership = 'private'
-        #insert pending request to db
-        app.db_util.insert_pending_user_request(session['username'],d['id'], d['entities'], ownership)
-        #invoke lambda function
-        invoke_render(d)
-        
-        return redirect(url_for('dashboard'))
-    
-@webapp.route('/logout')
+#User logout
+@webapp.route('/logout',methods=['GET','POST'])
+@is_logged_in
 def logout():
-    session.pop('username',None)
-    return redirect(url_for('index'))
+	session.clear()
+	flash('You are now logged out', 'success')
+	return redirect(url_for('login'))
 
-@webapp.route("/request",methods=["GET",'POST'])
-def render_request():
-    return "To be implemented"
+
